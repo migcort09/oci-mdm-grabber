@@ -1,0 +1,47 @@
+name: grab-oracle-a1
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  actions: write
+concurrency:
+  group: grab
+  cancel-in-progress: false
+jobs:
+  grab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install --quiet oci
+      - name: OCI config
+        env:
+          OCI_KEY: ${{ secrets.OCI_KEY }}
+          OCI_CONFIG: ${{ secrets.OCI_CONFIG }}
+        run: |
+          mkdir -p ~/.oci
+          printf '%s\n' "$OCI_KEY" > ~/.oci/key.pem
+          printf '%s\nkey_file=%s\n' "$OCI_CONFIG" "$HOME/.oci/key.pem" > ~/.oci/config
+          chmod 600 ~/.oci/key.pem ~/.oci/config
+      - id: grab
+        env:
+          SSH_PUB: ${{ vars.SSH_PUB }}
+          RETRY_WINDOW_SECONDS: "20700"
+        run: python grab.py
+      - name: Avisar y apagar el reintento
+        if: steps.grab.outputs.ip != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IP: ${{ steps.grab.outputs.ip }}
+          SHAPE: ${{ steps.grab.outputs.shape }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" --assignee "$GITHUB_REPOSITORY_OWNER" \
+            --title "Servidor MDM listo en Oracle: $IP" \
+            --body "Oracle ya dio la máquina (OCPU/GB: $SHAPE). IP pública: **$IP**. Siguiente paso: registro A 'mdm' en Hostinger → $IP, y avisar a Claude."
+          gh workflow disable grab.yml --repo "$GITHUB_REPOSITORY"
